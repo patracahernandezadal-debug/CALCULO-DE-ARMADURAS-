@@ -1,0 +1,577 @@
+import React, { useState, useEffect, useRef } from 'react'; 
+import { 
+  Plus, Trash2, Play, Download, MapPin, 
+  ArrowRight, Maximize2, Info, ChevronRight,
+  FileText, Activity, Hash, Settings, Globe, X, Loader2
+} from 'lucide-react';
+
+const App = () => {
+  // --- CARGA DINÁMICA DE LIBRERÍAS ---
+  useEffect(() => {
+    const scripts = [
+      "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+    ];
+    scripts.forEach(src => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      document.body.appendChild(script);
+    });
+  }, []);
+
+  // --- ESTADO ---
+  const [units, setUnits] = useState({ dist: 'm', force: 'kN', stress: 'MPa', modulus: 'GPa', area: 'cm²' });
+  const [nodes, setNodes] = useState([]);
+  const [bars, setBars] = useState([]);
+  const [loads, setLoads] = useState([]);
+  const [results, setResults] = useState(null);
+  const [activeTab, setActiveTab] = useState('input');
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  
+  const [globalArea, setGlobalArea] = useState('10'); 
+  const [globalE, setGlobalE] = useState('200'); 
+
+  const [newNode, setNewNode] = useState({ x: '', y: '', support: 'none' });
+  const [newBar, setNewBar] = useState({ node1: '', node2: '' });
+  const [newLoad, setNewLoad] = useState({ nodeId: '', magnitude: '', angle: '270' });
+
+  const reportRef = useRef(null);
+
+  const setUnitSystem = (system) => {
+    if (system === 'SI') {
+      setUnits({ dist: 'm', force: 'kN', stress: 'MPa', modulus: 'GPa', area: 'cm²' });
+      setGlobalE('200'); setGlobalArea('10');
+    } else {
+      setUnits({ dist: 'ft', force: 'lb', stress: 'psi', modulus: 'ksi', area: 'in²' });
+      setGlobalE('29000'); setGlobalArea('1.5');
+    }
+    setResults(null);
+  };
+
+  // --- GESTIÓN DE ELEMENTOS ---
+  const addNode = () => {
+    if (newNode.x === '' || newNode.y === '') return;
+    setNodes([...nodes, { 
+      id: nodes.length > 0 ? Math.max(...nodes.map(n => n.id)) + 1 : 1, 
+      x: parseFloat(newNode.x), 
+      y: parseFloat(newNode.y), 
+      support: newNode.support 
+    }]);
+    setNewNode({ x: '', y: '', support: 'none' }); 
+    setResults(null);
+  };
+
+  const deleteNode = (id) => {
+    setNodes(nodes.filter(n => n.id !== id));
+    setBars(bars.filter(b => b.node1 !== id && b.node2 !== id));
+    setLoads(loads.filter(l => l.nodeId !== id)); 
+    setResults(null);
+  };
+
+  const addBar = () => {
+    if (!newBar.node1 || !newBar.node2 || newBar.node1 === newBar.node2) return;
+    const n1 = parseInt(newBar.node1); 
+    const n2 = parseInt(newBar.node2);
+    if (bars.find(b => (b.node1 === n1 && b.node2 === n2) || (b.node1 === n2 && b.node2 === n1))) return;
+    setBars([...bars, { 
+      id: bars.length > 0 ? Math.max(...bars.map(b => b.id)) + 1 : 1, 
+      node1: n1, 
+      node2: n2 
+    }]);
+    setResults(null);
+  };
+
+  const deleteBar = (id) => {
+    setBars(bars.filter(b => b.id !== id)); 
+    setResults(null);
+  };
+
+  const addLoad = () => {
+    if (!newLoad.nodeId || newLoad.magnitude === '') return;
+    const mag = parseFloat(newLoad.magnitude); 
+    const angRad = (parseFloat(newLoad.angle) * Math.PI) / 180;
+    setLoads([...loads, { 
+      id: Date.now(), 
+      nodeId: parseInt(newLoad.nodeId), 
+      magnitude: mag, 
+      angle: parseFloat(newLoad.angle), 
+      fx: mag * Math.cos(angRad), 
+      fy: mag * Math.sin(angRad) 
+    }]);
+    setNewLoad({ ...newLoad, magnitude: '' }); 
+    setResults(null);
+  };
+
+  const deleteLoad = (id) => {
+    setLoads(loads.filter(l => l.id !== id)); 
+    setResults(null);
+  };
+
+  // --- LÓGICA DE ECUACIONES (MÉTODO DE NODOS) ---
+  const getNodeData = (nodeId) => {
+    if (!results) return null;
+    const node = nodes.find(n => n.id === nodeId);
+    const connectedBars = results.barForces.filter(b => b.node1 === nodeId || b.node2 === nodeId);
+    const nodeReactions = results.reactions.filter(r => r.label.startsWith(`${nodeId}_`));
+    const nodeLoads = loads.filter(l => l.nodeId === nodeId);
+
+    let eqX = []; let eqY = [];
+    let calcX = []; let calcY = [];
+
+    connectedBars.forEach(bar => {
+      const otherId = bar.node1 === nodeId ? bar.node2 : bar.node1;
+      const otherNode = nodes.find(n => n.id === otherId);
+      const dx = otherNode.x - node.x; 
+      const dy = otherNode.y - node.y;
+      const L = Math.sqrt(dx*dx + dy*dy);
+      const cos = (dx / L); 
+      const sin = (dy / L);
+      
+      const barLabel = `B_{${Math.min(nodeId, otherId)}-${Math.max(nodeId, otherId)}}`;
+      eqX.push(`${barLabel}(${cos.toFixed(3)})`);
+      eqY.push(`${barLabel}(${sin.toFixed(3)})`);
+      
+      calcX.push(`(${bar.force.toFixed(2)})(${cos.toFixed(3)})`);
+      calcY.push(`(${bar.force.toFixed(2)})(${sin.toFixed(3)})`);
+    });
+
+    nodeLoads.forEach(l => {
+      if (Math.abs(l.fx) > 0.01) { eqX.push(`${l.fx.toFixed(2)} [P]`); calcX.push(`${l.fx.toFixed(2)}`); }
+      if (Math.abs(l.fy) > 0.01) { eqY.push(`${l.fy.toFixed(2)} [P]`); calcY.push(`${l.fy.toFixed(2)}`); }
+    });
+
+    nodeReactions.forEach(r => {
+      const type = r.label.includes('Rx') ? 'Rx' : 'Ry';
+      eqX.push(`${r.value.toFixed(2)} [${type}]`);
+      if (type === 'Rx') calcX.push(`${r.value.toFixed(2)}`);
+      if (type === 'Ry') calcY.push(`${r.value.toFixed(2)}`);
+    });
+
+    return { 
+      node, 
+      eqX: eqX.join(' + ') || '0', 
+      eqY: eqY.join(' + ') || '0', 
+      calcX: calcX.join(' + ') || '0', 
+      calcY: calcY.join(' + ') || '0' 
+    };
+  };
+
+  const renderDCL = (nodeId, size = 200) => {
+    if (!results) return null;
+    const node = nodes.find(n => n.id === nodeId);
+    const connBars = results.barForces.filter(b => b.node1 === nodeId || b.node2 === nodeId);
+    const nodeReactions = results.reactions.filter(r => r.label.startsWith(`${nodeId}_`));
+    const center = size / 2;
+
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={center} cy={center} r="6" fill="#1e293b" />
+        <defs><marker id={`arr-${nodeId}`} markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="currentColor" /></marker></defs>
+        {connBars.map(bar => {
+          const otherId = bar.node1 === nodeId ? bar.node2 : bar.node1;
+          const otherNode = nodes.find(n => n.id === otherId);
+          const angle = Math.atan2(-(otherNode.y - node.y), otherNode.x - node.x);
+          const len = size * 0.3;
+          return (
+            <g key={bar.id}>
+              <line x1={center} y1={center} x2={center + Math.cos(angle)*len} y2={center + Math.sin(angle)*len} stroke={bar.force > 0 ? "#ef4444" : "#3b82f6"} strokeWidth="2" markerEnd={`url(#arr-${nodeId})`} />
+              <text x={center + Math.cos(angle)*(len+18)} y={center + Math.sin(angle)*(len+18)} fontSize="8" fontWeight="bold" textAnchor="middle">B{Math.min(nodeId, otherId)}-{Math.max(nodeId, otherId)}</text>
+            </g>
+          );
+        })}
+        {nodeReactions.map(r => {
+          const isX = r.label.includes('Rx'); 
+          const label = isX ? 'Rx' : 'Ry';
+          const xL = isX ? (r.value > 0 ? 40 : -40) : 0; 
+          const yL = !isX ? (r.value > 0 ? -40 : 40) : 0;
+          return (
+            <g key={r.label}>
+              <line x1={center} y1={center} x2={center+xL} y2={center+yL} stroke="#10b981" strokeWidth="2" markerEnd={`url(#arr-${nodeId})`} />
+              <text x={center + (isX ? (r.value > 0 ? 55 : -55) : 0)} y={center + (!isX ? (r.value > 0 ? -55 : 55) : 0)} fontSize="10" fontWeight="900" fill="#10b981" textAnchor="middle">{label}</text>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!window.jspdf || !window.html2canvas) return;
+    setIsGeneratingPDF(true);
+    const reportElement = reportRef.current;
+    const originalDisplay = reportElement.style.display;
+    reportElement.style.display = 'block';
+    try {
+      const canvas = await window.html2canvas(reportElement, { scale: 2, backgroundColor: "#ffffff" });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new window.jspdf.jsPDF('p', 'mm', 'letter');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      let heightLeft = pdfHeight; 
+      let position = 0; 
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pageHeight;
+      while (heightLeft >= 0) { 
+        position = heightLeft - pdfHeight; 
+        pdf.addPage(); 
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight); 
+        heightLeft -= pageHeight; 
+      }
+      pdf.save(`Calculo_Armadura.pdf`);
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      reportElement.style.display = originalDisplay; 
+      setIsGeneratingPDF(false); 
+    }
+  };
+
+  // --- SOLVER: MÉTODO DE NODOS ---
+  const solveTruss = () => {
+    const j = nodes.length; 
+    const m = bars.length;
+    const rCount = nodes.reduce((acc, n) => acc + (n.support === 'fixed' ? 2 : n.support === 'roller' ? 1 : 0), 0);
+    if (m + rCount < 2 * j) { alert("Inestable (m + r < 2j)"); return; }
+    
+    const numEq = 2 * j; 
+    const numUnknowns = m + rCount;
+    const A = Array(numEq).fill(0).map(() => Array(numUnknowns).fill(0));
+    const b = Array(numEq).fill(0);
+    let rIdx = m; 
+    const nodeReactionMap = {};
+
+    nodes.forEach((node, i) => {
+      const nodeLoads = loads.filter(l => l.nodeId === node.id);
+      b[2 * i] = -nodeLoads.reduce((sum, l) => sum + l.fx, 0);
+      b[2 * i + 1] = -nodeLoads.reduce((sum, l) => sum + l.fy, 0);
+      if (node.support === 'fixed') {
+        nodeReactionMap[`${node.id}_Rx`] = rIdx++; 
+        nodeReactionMap[`${node.id}_Ry`] = rIdx++;
+        A[2 * i][nodeReactionMap[`${node.id}_Rx`]] = 1; 
+        A[2 * i + 1][nodeReactionMap[`${node.id}_Ry`]] = 1;
+      } else if (node.support === 'roller') {
+        nodeReactionMap[`${node.id}_Ry`] = rIdx++; 
+        A[2 * i + 1][nodeReactionMap[`${node.id}_Ry`]] = 1;
+      }
+    });
+
+    bars.forEach((bar, i) => {
+      const n1 = nodes.find(n => n.id === bar.node1); 
+      const n2 = nodes.find(n => n.id === bar.node2);
+      const dx = n2.x - n1.x; 
+      const dy = n2.y - n1.y; 
+      const L = Math.sqrt(dx*dx + dy*dy);
+      const idx1 = nodes.findIndex(n => n.id === bar.node1); 
+      const idx2 = nodes.findIndex(n => n.id === bar.node2);
+      A[2 * idx1][i] = dx/L; 
+      A[2 * idx1 + 1][i] = dy/L; 
+      A[2 * idx2][i] = -dx/L; 
+      A[2 * idx2 + 1][i] = -dy/L;
+    });
+
+    try {
+      const x = solveLinearSystem(A, b);
+      const areaVal = parseFloat(globalArea);
+      const barForces = bars.map((bar, i) => {
+        const force = x[i];
+        const stress = (units.force === 'kN') ? (force / (areaVal * 0.0001)) / 1000 : force / areaVal;
+        return { 
+          ...bar, 
+          force, 
+          stress, 
+          type: force > 0.01 ? 'Tensión' : force < -0.01 ? 'Compresión' : 'Elem. Cero' 
+        };
+      });
+      setResults({ 
+        barForces, 
+        reactions: Object.keys(nodeReactionMap).map(key => ({ label: key, value: x[nodeReactionMap[key]] })) 
+      });
+      setActiveTab('analysis');
+    } catch (e) { 
+      alert("Sistema sin solución única (Verificar estabilidad)"); 
+    }
+  };
+
+  const solveLinearSystem = (A, b) => {
+    if (A.length === 0) return [];
+    const n = b.length; 
+    const m = A[0].length;
+    for (let i = 0; i < n && i < m; i++) {
+      let max = i; 
+      for (let j = i + 1; j < n; j++) if (Math.abs(A[j][i]) > Math.abs(A[max][i])) max = j;
+      [A[i], A[max]] = [A[max], A[i]]; 
+      [b[i], b[max]] = [b[max], b[i]];
+      if (Math.abs(A[i][i]) < 1e-12) continue;
+      for (let j = i + 1; j < n; j++) {
+        const factor = A[j][i] / A[i][i]; 
+        b[j] -= factor * b[i];
+        for (let k = i; k < m; k++) A[j][k] -= factor * A[i][k];
+      }
+    }
+    const x = Array(m).fill(0);
+    for (let i = Math.min(n, m) - 1; i >= 0; i--) {
+      if (Math.abs(A[i][i]) < 1e-12) continue;
+      let sum = 0; 
+      for (let j = i + 1; j < m; j++) sum += A[i][j] * x[j];
+      x[i] = (b[i] - sum) / A[i][i];
+    }
+    return x;
+  };
+
+  const renderTruss = (showForces = false, scaleFactor = 1) => {
+    if (nodes.length === 0) return null;
+    const minX = Math.min(...nodes.map(n => n.x)); 
+    const maxX = Math.max(...nodes.map(n => n.x));
+    const minY = Math.min(...nodes.map(n => n.y)); 
+    const maxY = Math.max(...nodes.map(n => n.y));
+    const width = 800 * scaleFactor; 
+    const height = 400 * scaleFactor;
+    const scale = Math.min((width - 150*scaleFactor) / (maxX - minX || 1), (height - 150*scaleFactor) / (maxY - minY || 1));
+    const getX = (x) => 75*scaleFactor + (x - minX) * scale; 
+    const getY = (y) => height - 75*scaleFactor - (y - minY) * scale;
+
+    return (
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} className="bg-slate-900 rounded-[2rem] shadow-2xl border-4 border-[#31470b]">
+        <defs>
+          <marker id="arr-gre" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#10b981" /></marker>
+          <marker id="arr-loa" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#eab308" /></marker>
+        </defs>
+        {bars.map(bar => {
+          const n1 = nodes.find(n => n.id === bar.node1); 
+          const n2 = nodes.find(n => n.id === bar.node2);
+          const res = results?.barForces.find(f => f.id === bar.id);
+          let color = res ? (res.type === 'Tensión' ? "stroke-rose-500" : res.type === 'Compresión' ? "stroke-cyan-500" : "stroke-slate-400") : "stroke-slate-600";
+          return (
+            <g key={bar.id}>
+              <line x1={getX(n1.x)} y1={getY(n1.y)} x2={getX(n2.x)} y2={getY(n2.y)} className={`${color} stroke-[6]`} strokeLinecap="round" />
+              {showForces && res && (
+                <g>
+                  <rect x={(getX(n1.x)+getX(n2.x))/2-35} y={(getY(n1.y)+getY(n2.y))/2-12} width="70" height="24" rx="6" fill="rgba(0,0,0,0.8)" />
+                  <text x={(getX(n1.x)+getX(n2.x))/2} y={(getY(n1.y)+getY(n2.y))/2+5} fill="white" fontSize="10" textAnchor="middle" fontWeight="bold">{Math.abs(res.force).toFixed(1)}</text>
+                </g>
+              )}
+            </g>
+          );
+        })}
+        {loads.map(l => {
+          const n = nodes.find(node => node.id === l.nodeId); 
+          if (!n) return null;
+          const r = (l.angle * Math.PI) / 180; 
+          const x2 = getX(n.x) + Math.cos(r)*50; 
+          const y2 = getY(n.y) - Math.sin(r)*50;
+          return <g key={l.id}><line x1={x2} y1={y2} x2={getX(n.x)} y2={getY(n.y)} stroke="#eab308" strokeWidth="4" markerEnd="url(#arr-loa)" /><text x={x2} y={y2-5} fill="#eab308" fontSize="10" fontWeight="bold" textAnchor="middle">{l.magnitude} {units.force}</text></g>
+        })}
+        {nodes.map(node => (
+          <g key={node.id}>
+            {node.support === 'fixed' && <path d={`M ${getX(node.x)-15} ${getY(node.y)+15} L ${getX(node.x)+15} ${getY(node.y)+15} L ${getX(node.x)} ${getY(node.y)} Z`} fill="#4ade80" />}
+            {node.support === 'roller' && <circle cx={getX(node.x)} cy={getY(node.y)+12} r="8" fill="#60a5fa" />}
+            <circle cx={getX(node.x)} cy={getY(node.y)} r="8" fill="white" />
+            <text x={getX(node.x)+14} y={getY(node.y)-14} fill="white" fontSize="13" fontWeight="900" opacity="0.8">N{node.id}</text>
+            {showForces && results?.reactions.filter(r => r.label.startsWith(`${node.id}_`)).map(r => {
+                const isRy = r.label.includes('Ry'); 
+                const label = isRy ? 'Ry' : 'Rx';
+                const x2 = getX(node.x) + (isRy ? 0 : (r.value > 0 ? 40 : -40)); 
+                const y2 = getY(node.y) + (isRy ? (r.value > 0 ? -40 : 40) : 0);
+                return (
+                  <g key={r.label}>
+                    <line x1={getX(node.x)} y1={getY(node.y)} x2={x2} y2={y2} stroke="#10b981" strokeWidth="3" markerEnd="url(#arr-gre)" />
+                    <text x={x2 + (isRy ? 5 : 0)} y={y2 + (isRy ? 0 : -5)} fill="#10b981" fontSize="12" fontWeight="900" textAnchor={isRy ? "start" : "middle"}>{label}: {Math.abs(r.value).toFixed(1)}</text>
+                  </g>
+                );
+            })}
+          </g>
+        ))}
+      </svg>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-10 font-sans">
+      <header className="max-w-7xl mx-auto mb-12 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+        <h1 className="text-4xl lg:text-5xl font-black text-[#203500] tracking-tighter uppercase">CALCULADORA ARMADURAS NODO X NODO</h1>
+        <div className="flex flex-wrap items-center gap-4 print:hidden">
+          <div className="flex bg-white p-1.5 rounded-3xl shadow-md border-2 border-slate-100">
+            <button onClick={() => setUnitSystem('SI')} className={`px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all ${units.dist === 'm' ? 'bg-[#203500] text-white shadow-xl' : 'text-slate-400 hover:text-[#586e26]'}`}>S.I. (m/kN)</button>
+            <button onClick={() => setUnitSystem('US')} className={`px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all ${units.dist === 'ft' ? 'bg-[#203500] text-white shadow-xl' : 'text-slate-400 hover:text-[#586e26]'}`}>U.S. (ft/lb)</button>
+          </div>
+          <button onClick={handleDownloadPDF} disabled={isGeneratingPDF || !results} className="px-6 py-4 bg-white border-2 border-slate-100 rounded-3xl hover:bg-slate-50 font-black text-xs uppercase tracking-widest shadow-sm">
+            {isGeneratingPDF ? <Loader2 className="animate-spin" size={20} /> : <Download size={20} className="text-[#586e26]" />} REPORTE PDF
+          </button>
+          <button onClick={solveTruss} disabled={nodes.length < 2 || bars.length < 1} className="px-10 py-4 bg-[#31470b] text-white rounded-3xl hover:bg-[#203500] shadow-xl font-black uppercase text-xs tracking-[0.2em] flex items-center gap-3 transition-all"><Play size={20} fill="currentColor" /> Calcular</button>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10">
+        <aside className="lg:col-span-4 space-y-8 print:hidden">
+          <section className="bg-white rounded-[2.5rem] shadow-xl border-2 border-slate-50 p-8 space-y-6">
+            <h3 className="font-black text-[#203500] flex items-center gap-3 uppercase tracking-widest text-[12px]"><MapPin size={20} className="text-[#586e26]" /> 1. Geometría</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <input type="number" placeholder="X" value={newNode.x} onChange={e => setNewNode({...newNode, x: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold focus:border-[#586e26] outline-none" />
+              <input type="number" placeholder="Y" value={newNode.y} onChange={e => setNewNode({...newNode, y: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold focus:border-[#586e26] outline-none" />
+            </div>
+            <select value={newNode.support} onChange={e => setNewNode({...newNode, support: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold appearance-none outline-none focus:border-[#586e26]"><option value="none">Sin Apoyo</option><option value="fixed">Fijo</option><option value="roller">Móvil</option></select>
+            <button onClick={addNode} className="w-full py-4 bg-[#203500] text-white rounded-2xl font-black uppercase text-[11px] shadow-lg">Crear Nodo</button>
+            <div className="max-h-40 overflow-y-auto space-y-2">
+              {nodes.map(n => (
+                <div key={n.id} className="flex justify-between p-3 bg-slate-50 rounded-2xl text-[11px] font-black">
+                  <span>N{n.id}: ({n.x}, {n.y})</span>
+                  <button onClick={() => deleteNode(n.id)} className="text-rose-500"><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="bg-white rounded-[2.5rem] shadow-xl border-2 border-slate-50 p-8 space-y-6">
+            <h3 className="font-black text-[#203500] flex items-center gap-3 uppercase text-[12px]"><ArrowRight size={20} className="text-[#586e26]" /> 2. Elementos</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <select value={newBar.node1} onChange={e => setNewBar({...newBar, node1: e.target.value})} className="p-4 bg-slate-50 rounded-2xl text-xs font-bold outline-none"><option value="">De N1</option>{nodes.map(n => <option key={n.id} value={n.id}>Nodo {n.id}</option>)}</select>
+              <select value={newBar.node2} onChange={e => setNewBar({...newBar, node2: e.target.value})} className="p-4 bg-slate-50 rounded-2xl text-xs font-bold outline-none"><option value="">A N2</option>{nodes.map(n => <option key={n.id} value={n.id}>Nodo {n.id}</option>)}</select>
+            </div>
+            <button onClick={addBar} className="w-full py-4 bg-[#203500] text-white rounded-2xl font-black uppercase text-[11px] shadow-lg">Conectar Barra</button>
+            <div className="max-h-40 overflow-y-auto space-y-2">
+              {bars.map(b => (
+                <div key={b.id} className="flex justify-between p-3 bg-slate-50 rounded-2xl text-[11px] font-black">
+                  <span>B{b.id}: N{b.node1} ↔ N{b.node2}</span>
+                  <button onClick={() => deleteBar(b.id)} className="text-rose-500"><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="bg-white rounded-[2.5rem] shadow-xl border-2 border-slate-50 p-8 space-y-6">
+            <h3 className="font-black text-[#203500] flex items-center gap-3 uppercase text-[12px]"><ChevronRight size={20} className="bg-[#d9ef9f] rounded-full" /> 3. Fuerzas</h3>
+            <select value={newLoad.nodeId} onChange={e => setNewLoad({...newLoad, nodeId: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold outline-none"><option value="">Nodo...</option>{nodes.map(n => <option key={n.id} value={n.id}>Nodo {n.id}</option>)}</select>
+            <div className="grid grid-cols-2 gap-3">
+              <input type="number" placeholder="Mag" value={newLoad.magnitude} onChange={e => setNewLoad({...newLoad, magnitude: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" />
+              <input type="number" placeholder="Ang" value={newLoad.angle} onChange={e => setNewLoad({...newLoad, angle: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold" />
+            </div>
+            <button onClick={addLoad} className="w-full py-4 bg-[#31470b] text-white font-black uppercase text-[11px] rounded-2xl shadow-lg">Aplicar Carga</button>
+            <div className="max-h-40 overflow-y-auto space-y-2">
+              {loads.map(l => (
+                <div key={l.id} className="flex justify-between p-3 bg-slate-50 rounded-2xl text-[10px] font-black">
+                  <span>N{l.nodeId}: {l.magnitude}{units.force} @ {l.angle}°</span>
+                  <button onClick={() => deleteLoad(l.id)} className="text-rose-500"><Trash2 size={14} /></button>
+                </div>
+              ))}
+            </div>
+          </section>
+        </aside>
+
+        <div className="lg:col-span-8 space-y-8">
+          <div className="flex bg-white p-2 rounded-3xl shadow-xl border-2 border-slate-50 gap-1.5 overflow-x-auto print:hidden">
+            <button onClick={() => setActiveTab('input')} className={`flex-1 py-4 px-6 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all ${activeTab === 'input' ? 'bg-[#203500] text-white shadow-2xl' : 'text-slate-400 hover:bg-slate-50'}`}><Maximize2 size={18} /> Estructura</button>
+            <button onClick={() => setActiveTab('analysis')} className={`flex-1 py-4 px-6 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all ${activeTab === 'analysis' ? 'bg-[#203500] text-white shadow-2xl' : 'text-slate-400 hover:bg-slate-50'}`}><Activity size={18} /> Resultados</button>
+            <button onClick={() => setActiveTab('nodes-detail')} className={`flex-1 py-4 px-6 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all ${activeTab === 'nodes-detail' ? 'bg-[#203500] text-white shadow-2xl' : 'text-slate-400 hover:bg-slate-50'}`}><Hash size={18} /> Análisis Nodo a Nodo</button>
+          </div>
+
+          <div className="bg-white p-12 rounded-[5rem] shadow-2xl border-4 border-slate-50 min-h-[600px]">
+            {activeTab === 'input' && <div className="space-y-10">
+              <h2 className="text-4xl font-black text-[#203500] text-center uppercase mb-6">Geometría Base</h2>
+              <div className="flex justify-center gap-6">
+                <div className="p-6 border-4 border-slate-100 rounded-[2.5rem] flex flex-col items-center">
+                  <span className="text-[10px] uppercase font-black opacity-30">Área</span>
+                  <input type="number" value={globalArea} onChange={e => setGlobalArea(e.target.value)} className="text-2xl font-black text-center w-16 bg-transparent" />
+                  <span className="text-[#586e26] font-bold">{units.area}</span>
+                </div>
+                <div className="p-6 border-4 border-slate-100 rounded-[2.5rem] flex flex-col items-center">
+                  <span className="text-[10px] uppercase font-black opacity-30">Módulo E</span>
+                  <input type="number" value={globalE} onChange={e => setGlobalE(e.target.value)} className="text-2xl font-black text-center w-20 bg-transparent" />
+                  <span className="text-[#586e26] font-bold">{units.modulus}</span>
+                </div>
+              </div>
+              {renderTruss(false)}
+            </div>}
+            
+            {activeTab === 'analysis' && <div className="space-y-12">
+              <h2 className="text-4xl font-black text-[#203500] text-center uppercase">Resultados</h2>
+              {renderTruss(true)}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div className="bg-[#203500] rounded-[3.5rem] p-10 text-white shadow-2xl">
+                  <h3 className="text-[12px] uppercase font-black opacity-30 border-b border-[#31470b] pb-3">Fuerzas Internas</h3>
+                  <div className="max-h-60 overflow-y-auto space-y-3">
+                    {results?.barForces.map(f => (
+                      <div key={f.id} className="flex justify-between items-center py-2 border-b border-[#31470b]/50 text-[11px] font-black">
+                        <span>Barra {f.id}</span>
+                        <span className={f.type === 'Tensión' ? 'text-rose-400' : f.type === 'Compresión' ? 'text-cyan-400' : 'text-slate-500'}>{Math.abs(f.force).toFixed(2)} {units.force}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-[#d9ef9f]/10 border-4 border-[#d9ef9f]/30 rounded-[3.5rem] p-10">
+                  <h3 className="text-[12px] uppercase font-black text-[#203500] border-b border-[#d9ef9f] pb-3">Reacciones</h3>
+                  <div className="space-y-4 font-black text-sm">
+                    {results?.reactions.map(r => (
+                      <div key={r.label} className="flex justify-between items-center border-b border-[#d9ef9f]/50 pb-2">
+                        <span className="text-[#586e26]/60 uppercase text-[10px]">{r.label}:</span>
+                        <span className="text-[#31470b]">{r.value.toFixed(2)} {units.force}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>}
+
+            {activeTab === 'nodes-detail' && <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+              {nodes.map(n => { 
+                const d = getNodeData(n.id); 
+                if (!d) return null; 
+                return (
+                  <div key={n.id} className="bg-white rounded-[3rem] shadow-2xl border-4 border-slate-50 p-8 flex flex-col items-center">
+                    <h4 className="text-2xl font-black text-[#203500] mb-6 uppercase decoration-[#586e26] underline underline-offset-8">Nodo {n.id}</h4>
+                    <div className="w-full h-64 bg-slate-50 rounded-[2.5rem] flex items-center justify-center border-2 border-dashed border-slate-200 mb-6">{renderDCL(n.id, 220)}</div>
+                    <div className="w-full space-y-2">
+                      <div className="bg-[#203500] text-white p-4 rounded-2xl font-mono text-[9px]">
+                        <p><span className="text-[#d9ef9f] font-bold">ΣFx:</span> {String(d.eqX)} = 0</p>
+                        <p><span className="text-[#d9ef9f] font-bold">Val:</span> {String(d.calcX)} ≈ 0</p>
+                      </div>
+                      <div className="bg-[#203500] text-white p-4 rounded-2xl font-mono text-[9px]">
+                        <p><span className="text-[#d9ef9f] font-bold">ΣFy:</span> {String(d.eqY)} = 0</p>
+                        <p><span className="text-[#d9ef9f] font-bold">Val:</span> {String(d.calcY)} ≈ 0</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+          </div>
+
+          <div ref={reportRef} style={{ display: 'none', backgroundColor: '#ffffff', width: '215.9mm', padding: '15mm', minHeight: '279.4mm' }}>
+            <div style={{ borderBottom: '3pt solid #203500', marginBottom: '8mm', paddingBottom: '4mm', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <div>
+                <h1 style={{ fontSize: '24pt', fontWeight: '900', color: '#203500', textTransform: 'uppercase', margin: 0 }}>Memoria de Cálculo</h1>
+                <p style={{ fontSize: '11pt', color: '#586e26', fontWeight: 'bold', margin: '2mm 0' }}>Calculadora Armaduras Nodo x Nodo</p>
+                <p style={{ fontSize: '9pt', color: '#31470b', margin: 0 }}>POR PATRACA HERNANDEZ AGUSTIN, IPN</p>
+              </div>
+              <p style={{ fontSize: '10pt', color: '#31470b', margin: 0 }}>Fecha: {new Date().toLocaleDateString()}</p>
+            </div>
+            <h2 style={{ fontSize: '14pt', fontWeight: 'bold', borderLeft: '5pt solid #586e26', paddingLeft: '3mm', marginBottom: '4mm', color: '#203500' }}>I. ESQUEMA GENERAL Y REACCIONES</h2>
+            <div style={{ border: '1pt solid #f1f5f9', borderRadius: '6mm', padding: '6mm', textAlign: 'center', marginBottom: '8mm', backgroundColor: '#f8fafc' }}>{renderTruss(true, 0.8)}</div>
+            <h2 style={{ fontSize: '14pt', fontWeight: 'bold', borderLeft: '5pt solid #586e26', paddingLeft: '3mm', marginBottom: '6mm', color: '#203500' }}>II. DESARROLLO DE NODOS (DCL)</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6mm' }}>
+              {nodes.map(n => { 
+                const d = getNodeData(n.id); 
+                if (!d) return null; 
+                return (
+                  <div key={n.id} style={{ border: '1pt solid #d9ef9f', borderRadius: '4mm', padding: '4mm', pageBreakInside: 'avoid' }}>
+                    <p style={{ fontWeight: '900', fontSize: '10pt', textAlign: 'center', color: '#203500', marginBottom: '2mm' }}>NODO {n.id}</p>
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>{renderDCL(n.id, 160)}</div>
+                    <div style={{ fontSize: '7.5pt', fontFamily: 'monospace', backgroundColor: '#f1f5f9', padding: '3mm', borderRadius: '2mm' }}>
+                      <p><strong style={{color: '#586e26'}}>Eq X:</strong> {String(d.eqX)} = 0</p>
+                      <p><strong style={{color: '#586e26'}}>Eq Y:</strong> {String(d.eqY)} = 0</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer className="max-w-7xl mx-auto mt-24 pt-16 border-t-8 border-[#d9ef9f]/30 text-center text-[#586e26]/30 text-[11px] uppercase tracking-[0.4em] font-black pb-20 italic">
+        Calculadora Armaduras Nodo x Nodo · Ingeniería Estructural · 2026 - POR PATRACA HERNANDEZ AGUSTIN, IPN
+      </footer>
+    </div>
+  );
+};
+
+export default App;
