@@ -1,0 +1,636 @@
+!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora Armaduras Nodo x Nodo</title>
+    <!-- Tailwind CSS para el diseño -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Librerías para PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #586e26; border-radius: 10px; }
+        .tab-active { background-color: #203500; color: white; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); }
+        .tab-inactive { color: #94a3b8; }
+        .tab-inactive:hover { background-color: #f1f5f9; }
+    </style>
+</head>
+<body class="p-4 md:p-10 text-slate-900">
+
+    <div class="max-w-7xl mx-auto">
+        <!-- ENCABEZADO -->
+        <header class="mb-12 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+            <h1 class="text-4xl lg:text-5xl font-black text-[#203500] tracking-tighter uppercase">
+                CALCULADORA ARMADURAS NODO X NODO
+            </h1>
+            <div class="flex flex-wrap items-center gap-4">
+                <div class="flex bg-white p-1.5 rounded-3xl shadow-md border-2 border-slate-100">
+                    <button onclick="setUnitSystem('SI')" id="btnSI" class="px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all bg-[#203500] text-white shadow-xl">S.I. (m/kN)</button>
+                    <button onclick="setUnitSystem('US')" id="btnUS" class="px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all text-slate-400">U.S. (ft/lb)</button>
+                </div>
+                <button onclick="handleDownloadPDF()" id="btnPDF" disabled class="px-6 py-4 bg-white border-2 border-slate-100 rounded-3xl hover:bg-slate-50 font-black text-xs uppercase tracking-widest flex items-center gap-3 shadow-sm disabled:opacity-50">
+                    <span id="pdfIcon"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#586e26" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                    REPORTE PDF
+                </button>
+                <button onclick="solveTruss()" id="btnCalcular" class="px-10 py-4 bg-[#31470b] text-white rounded-3xl hover:bg-[#203500] shadow-xl font-black uppercase text-xs tracking-[0.2em] flex items-center gap-3 transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    Calcular
+                </button>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-12 gap-10">
+            <!-- ASIDE: INPUTS -->
+            <aside class="lg:col-span-4 space-y-8 print:hidden">
+                <!-- NODOS -->
+                <section class="bg-white rounded-[2.5rem] shadow-xl border-2 border-slate-50 p-8 space-y-6">
+                    <h3 class="font-black text-[#203500] flex items-center gap-3 uppercase tracking-widest text-[12px]">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#586e26" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        1. Geometría
+                    </h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="relative">
+                            <input type="number" id="nodeX" placeholder="X" class="w-full pl-10 pr-4 py-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold focus:border-[#586e26] outline-none">
+                            <span class="unitLabel absolute left-4 top-4.5 text-[10px] font-black text-[#586e26] uppercase mt-4">m</span>
+                        </div>
+                        <div class="relative">
+                            <input type="number" id="nodeY" placeholder="Y" class="w-full pl-10 pr-4 py-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold focus:border-[#586e26] outline-none">
+                            <span class="unitLabel absolute left-4 top-4.5 text-[10px] font-black text-[#586e26] uppercase mt-4">m</span>
+                        </div>
+                    </div>
+                    <select id="nodeSupport" class="w-full px-5 py-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold appearance-none outline-none focus:border-[#586e26]">
+                        <option value="none">Sin Apoyo</option>
+                        <option value="fixed">Fijo</option>
+                        <option value="roller">Móvil</option>
+                    </select>
+                    <button onclick="addNode()" class="w-full py-4 bg-[#203500] text-white rounded-2xl font-black uppercase text-[11px] tracking-widest shadow-lg hover:bg-[#31470b]">Crear Nodo</button>
+                    <div id="nodesList" class="max-h-40 overflow-y-auto space-y-2 pr-2 custom-scrollbar"></div>
+                </section>
+
+                <!-- BARRAS -->
+                <section class="bg-white rounded-[2.5rem] shadow-xl border-2 border-slate-50 p-8 space-y-6">
+                    <h3 class="font-black text-[#203500] flex items-center gap-3 uppercase tracking-widest text-[12px]">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#586e26" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                        2. Elementos
+                    </h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <select id="barNode1" class="p-4 bg-slate-50 border-2 border-transparent rounded-2xl text-xs font-bold outline-none focus:border-[#586e26]"><option value="">De N1</option></select>
+                        <select id="barNode2" class="p-4 bg-slate-50 border-2 border-transparent rounded-2xl text-xs font-bold outline-none focus:border-[#586e26]"><option value="">A N2</option></select>
+                    </div>
+                    <button onclick="addBar()" class="w-full py-4 bg-[#203500] text-white rounded-2xl font-black uppercase text-[11px] tracking-widest shadow-lg">Conectar Barra</button>
+                    <div id="barsList" class="max-h-40 overflow-y-auto space-y-2 pr-2 custom-scrollbar"></div>
+                </section>
+
+                <!-- CARGAS -->
+                <section class="bg-white rounded-[2.5rem] shadow-xl border-2 border-slate-50 p-8 space-y-6">
+                    <h3 class="font-black text-[#203500] flex items-center gap-3 uppercase tracking-widest text-[12px]">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#586e26" stroke-width="2" class="bg-[#d9ef9f] rounded-full"><polyline points="9 18 15 12 9 6"/></svg>
+                        3. Fuerzas
+                    </h3>
+                    <select id="loadNode" class="w-full px-5 py-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold outline-none focus:border-[#586e26]"><option value="">Nodo...</option></select>
+                    <div class="grid grid-cols-2 gap-3">
+                        <input type="number" id="loadMag" placeholder="Mag" class="w-full p-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold outline-none focus:border-[#586e26]">
+                        <input type="number" id="loadAng" placeholder="Ang" value="270" class="w-full p-4 bg-slate-50 border-2 border-transparent rounded-2xl text-sm font-bold outline-none focus:border-[#586e26]">
+                    </div>
+                    <button onclick="addLoad()" class="w-full py-4 bg-[#31470b] text-white font-black uppercase text-[11px] tracking-widest rounded-2xl shadow-lg">Aplicar Carga</button>
+                    <div id="loadsList" class="max-h-40 overflow-y-auto space-y-2 pr-2 custom-scrollbar"></div>
+                </section>
+            </aside>
+
+            <!-- CONTENIDO PRINCIPAL -->
+            <div class="lg:col-span-8 space-y-8">
+                <!-- TABS -->
+                <div class="flex bg-white p-2 rounded-3xl shadow-xl border-2 border-slate-50 gap-1.5 overflow-x-auto print:hidden">
+                    <button onclick="setActiveTab('input')" id="tabInput" class="flex-1 py-4 px-6 rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all tab-active">Estructura</button>
+                    <button onclick="setActiveTab('analysis')" id="tabAnalysis" class="flex-1 py-4 px-6 rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all tab-inactive">Resultados</button>
+                    <button onclick="setActiveTab('nodes-detail')" id="tabNodes" class="flex-1 py-4 px-6 rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all tab-inactive">Nodos</button>
+                </div>
+
+                <!-- ÁREA DE VISUALIZACIÓN -->
+                <div class="bg-white p-6 md:p-12 rounded-[3rem] md:rounded-[5rem] shadow-2xl border-4 border-slate-50 min-h-[600px]">
+                    <div id="view-input" class="space-y-10">
+                        <h2 class="text-3xl font-black text-[#203500] text-center uppercase mb-6">Geometría Base</h2>
+                        <div class="flex justify-center gap-6">
+                            <div class="p-6 border-4 border-slate-100 rounded-[2.5rem] flex flex-col items-center">
+                                <span class="text-[10px] uppercase font-black opacity-30">Área</span>
+                                <input type="number" id="globalArea" value="10" onchange="updateGlobalSettings()" class="text-2xl font-black text-center w-16 bg-transparent outline-none">
+                                <span class="areaUnit text-[#586e26] font-bold">cm²</span>
+                            </div>
+                            <div class="p-6 border-4 border-slate-100 rounded-[2.5rem] flex flex-col items-center">
+                                <span class="text-[10px] uppercase font-black opacity-30">Módulo E</span>
+                                <input type="number" id="globalE" value="200" onchange="updateGlobalSettings()" class="text-2xl font-black text-center w-20 bg-transparent outline-none">
+                                <span class="modUnit text-[#586e26] font-bold">GPa</span>
+                            </div>
+                        </div>
+                        <div id="svgContainer" class="w-full"></div>
+                    </div>
+
+                    <div id="view-analysis" class="hidden space-y-12">
+                        <h2 class="text-3xl font-black text-[#203500] text-center uppercase">Resultados</h2>
+                        <div id="svgResultContainer" class="w-full"></div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-10">
+                            <div class="bg-[#203500] rounded-[3.5rem] p-10 text-white shadow-2xl">
+                                <h3 class="text-[12px] uppercase font-black opacity-30 border-b border-[#31470b] pb-3">Fuerzas Internas</h3>
+                                <div id="forcesTable" class="max-h-60 overflow-y-auto space-y-3 custom-scrollbar mt-4"></div>
+                            </div>
+                            <div class="bg-[#d9ef9f]/10 border-4 border-[#d9ef9f]/30 rounded-[3.5rem] p-10 shadow-lg">
+                                <h3 class="text-[12px] uppercase font-black text-[#203500] border-b border-[#d9ef9f] pb-3">Reacciones</h3>
+                                <div id="reactionsTable" class="space-y-4 font-black text-sm mt-4"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="view-nodes-detail" class="hidden grid grid-cols-1 md:grid-cols-2 gap-10"></div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="mt-24 pt-16 border-t-8 border-[#d9ef9f]/30 text-center text-[#586e26]/30 text-[11px] uppercase tracking-[0.4em] font-black pb-20 italic">
+            Calculadora Armaduras Nodo x Nodo · Ingeniería Estructural · 2026 - POR PATRACA HERNANDEZ AGUSTIN, IPN
+        </footer>
+    </div>
+
+    <!-- CONTENEDOR OCULTO PARA PDF -->
+    <div id="reportContainer" style="display: none; position: absolute; left: -9999px; width: 215.9mm; padding: 15mm; background-color: white;"></div>
+
+    <script>
+        // --- ESTADO GLOBAL ---
+        let units = { dist: 'm', force: 'kN', stress: 'MPa', modulus: 'GPa', area: 'cm²' };
+        let nodes = [];
+        let bars = [];
+        let loads = [];
+        let results = null;
+        let activeTab = 'input';
+        
+        // --- INICIALIZACIÓN ---
+        function setUnitSystem(system) {
+            if (system === 'SI') {
+                units = { dist: 'm', force: 'kN', stress: 'MPa', modulus: 'GPa', area: 'cm²' };
+                document.getElementById('globalE').value = "200";
+                document.getElementById('globalArea').value = "10";
+                document.getElementById('btnSI').className = "px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all bg-[#203500] text-white shadow-xl";
+                document.getElementById('btnUS').className = "px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all text-slate-400";
+            } else {
+                units = { dist: 'ft', force: 'lb', stress: 'psi', modulus: 'ksi', area: 'in²' };
+                document.getElementById('globalE').value = "29000";
+                document.getElementById('globalArea').value = "1.5";
+                document.getElementById('btnUS').className = "px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all bg-[#203500] text-white shadow-xl";
+                document.getElementById('btnSI').className = "px-6 py-3 rounded-[1.25rem] text-[11px] font-black transition-all text-slate-400";
+            }
+            results = null;
+            document.querySelectorAll('.unitLabel').forEach(el => el.innerText = units.dist);
+            document.querySelector('.areaUnit').innerText = units.area;
+            document.querySelector('.modUnit').innerText = units.modulus;
+            updateUI();
+        }
+
+        // --- GESTIÓN DE ELEMENTOS ---
+        function addNode() {
+            const x = document.getElementById('nodeX').value;
+            const y = document.getElementById('nodeY').value;
+            const support = document.getElementById('nodeSupport').value;
+            if (x === '' || y === '') return;
+            nodes.push({
+                id: nodes.length > 0 ? Math.max(...nodes.map(n => n.id)) + 1 : 1,
+                x: parseFloat(x),
+                y: parseFloat(y),
+                support: support
+            });
+            document.getElementById('nodeX').value = '';
+            document.getElementById('nodeY').value = '';
+            results = null;
+            updateUI();
+        }
+
+        function deleteNode(id) {
+            nodes = nodes.filter(n => n.id !== id);
+            bars = bars.filter(b => b.node1 !== id && b.node2 !== id);
+            loads = loads.filter(l => l.nodeId !== id);
+            results = null;
+            updateUI();
+        }
+
+        function addBar() {
+            const n1 = parseInt(document.getElementById('barNode1').value);
+            const n2 = parseInt(document.getElementById('barNode2').value);
+            if (!n1 || !n2 || n1 === n2) return;
+            if (bars.find(b => (b.node1 === n1 && b.node2 === n2) || (b.node1 === n2 && b.node2 === n1))) return;
+            bars.push({
+                id: bars.length > 0 ? Math.max(...bars.map(b => b.id)) + 1 : 1,
+                node1: n1,
+                node2: n2
+            });
+            results = null;
+            updateUI();
+        }
+
+        function deleteBar(id) {
+            bars = bars.filter(b => b.id !== id);
+            results = null;
+            updateUI();
+        }
+
+        function addLoad() {
+            const nodeId = parseInt(document.getElementById('loadNode').value);
+            const magnitude = document.getElementById('loadMag').value;
+            const angle = document.getElementById('loadAng').value;
+            if (!nodeId || magnitude === '') return;
+            const mag = parseFloat(magnitude);
+            const angRad = (parseFloat(angle) * Math.PI) / 180;
+            loads.push({
+                id: Date.now(),
+                nodeId: nodeId,
+                magnitude: mag,
+                angle: parseFloat(angle),
+                fx: mag * Math.cos(angRad),
+                fy: mag * Math.sin(angRad)
+            });
+            document.getElementById('loadMag').value = '';
+            results = null;
+            updateUI();
+        }
+
+        function deleteLoad(id) {
+            loads = loads.filter(l => l.id !== id);
+            results = null;
+            updateUI();
+        }
+
+        // --- CÁLCULOS (MÉTODO DE NODOS) ---
+        function solveTruss() {
+            const j = nodes.length;
+            const m = bars.length;
+            const rCount = nodes.reduce((acc, n) => acc + (n.support === 'fixed' ? 2 : n.support === 'roller' ? 1 : 0), 0);
+            
+            if (j < 2 || m < 1) { alert("Estructura incompleta."); return; }
+            if (m + rCount < 2 * j) { alert("Inestable (m + r < 2j)"); return; }
+            
+            const numEq = 2 * j;
+            const numUnknowns = m + rCount;
+            const A = Array(numEq).fill(0).map(() => Array(numUnknowns).fill(0));
+            const b = Array(numEq).fill(0);
+            let rIdx = m;
+            const nodeReactionMap = {};
+
+            nodes.forEach((node, i) => {
+                const nodeLoads = loads.filter(l => l.nodeId === node.id);
+                b[2 * i] = -nodeLoads.reduce((sum, l) => sum + l.fx, 0);
+                b[2 * i + 1] = -nodeLoads.reduce((sum, l) => sum + l.fy, 0);
+                if (node.support === 'fixed') {
+                    nodeReactionMap[`${node.id}_Rx`] = rIdx++;
+                    nodeReactionMap[`${node.id}_Ry`] = rIdx++;
+                    A[2 * i][nodeReactionMap[`${node.id}_Rx`]] = 1;
+                    A[2 * i + 1][nodeReactionMap[`${node.id}_Ry`]] = 1;
+                } else if (node.support === 'roller') {
+                    nodeReactionMap[`${node.id}_Ry`] = rIdx++;
+                    A[2 * i + 1][nodeReactionMap[`${node.id}_Ry`]] = 1;
+                }
+            });
+
+            bars.forEach((bar, i) => {
+                const n1 = nodes.find(n => n.id === bar.node1);
+                const n2 = nodes.find(n => n.id === bar.node2);
+                const dx = n2.x - n1.x;
+                const dy = n2.y - n1.y;
+                const L = Math.sqrt(dx*dx + dy*dy);
+                const idx1 = nodes.findIndex(n => n.id === bar.node1);
+                const idx2 = nodes.findIndex(n => n.id === bar.node2);
+                A[2 * idx1][i] = dx/L;
+                A[2 * idx1 + 1][i] = dy/L;
+                A[2 * idx2][i] = -dx/L;
+                A[2 * idx2 + 1][i] = -dy/L;
+            });
+
+            try {
+                const x = solveLinearSystem(A, b);
+                const areaVal = parseFloat(document.getElementById('globalArea').value);
+                const barForces = bars.map((bar, i) => {
+                    const force = x[i];
+                    return { ...bar, force, type: force > 0.01 ? 'Tensión' : force < -0.01 ? 'Compresión' : 'Elem. Cero' };
+                });
+                results = {
+                    barForces,
+                    reactions: Object.keys(nodeReactionMap).map(key => ({ label: key, value: x[nodeReactionMap[key]] }))
+                };
+                setActiveTab('analysis');
+                document.getElementById('btnPDF').disabled = false;
+            } catch (e) {
+                alert("Error: El sistema no tiene solución única.");
+            }
+        }
+
+        function solveLinearSystem(A, b) {
+            const n = b.length;
+            const m = A[0].length;
+            for (let i = 0; i < n && i < m; i++) {
+                let max = i;
+                for (let j = i + 1; j < n; j++) if (Math.abs(A[j][i]) > Math.abs(A[max][i])) max = j;
+                [A[i], A[max]] = [A[max], A[i]];
+                [b[i], b[max]] = [b[max], b[i]];
+                if (Math.abs(A[i][i]) < 1e-12) continue;
+                for (let j = i + 1; j < n; j++) {
+                    const f = A[j][i] / A[i][i];
+                    b[j] -= f * b[i];
+                    for (let k = i; k < m; k++) A[j][k] -= f * A[i][k];
+                }
+            }
+            const x = Array(m).fill(0);
+            for (let i = Math.min(n, m) - 1; i >= 0; i--) {
+                if (Math.abs(A[i][i]) < 1e-12) continue;
+                let s = 0;
+                for (let j = i + 1; j < m; j++) s += A[i][j] * x[j];
+                x[i] = (b[i] - s) / A[i][i];
+            }
+            return x;
+        }
+
+        // --- RENDERIZADO Y UI ---
+        function setActiveTab(tab) {
+            activeTab = tab;
+            document.getElementById('view-input').className = tab === 'input' ? '' : 'hidden';
+            document.getElementById('view-analysis').className = tab === 'analysis' ? '' : 'hidden';
+            document.getElementById('view-nodes-detail').className = tab === 'nodes-detail' ? 'grid grid-cols-1 md:grid-cols-2 gap-10' : 'hidden';
+            
+            document.getElementById('tabInput').className = `flex-1 py-4 px-6 rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all ${tab === 'input' ? 'tab-active' : 'tab-inactive'}`;
+            document.getElementById('tabAnalysis').className = `flex-1 py-4 px-6 rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all ${tab === 'analysis' ? 'tab-active' : 'tab-inactive'}`;
+            document.getElementById('tabNodes').className = `flex-1 py-4 px-6 rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] transition-all ${tab === 'nodes-detail' ? 'tab-active' : 'tab-inactive'}`;
+            
+            updateUI();
+        }
+
+        function updateUI() {
+            // Actualizar listas laterales
+            const nList = document.getElementById('nodesList');
+            nList.innerHTML = nodes.map(n => `
+                <div class="flex justify-between p-3 bg-slate-50 rounded-2xl text-[11px] font-black border border-slate-100">
+                    <span>N${n.id}: (${n.x}, ${n.y})</span>
+                    <button onclick="deleteNode(${n.id})" class="text-rose-500"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                </div>
+            `).join('');
+
+            const bList = document.getElementById('barsList');
+            bList.innerHTML = bars.map(b => `
+                <div class="flex justify-between p-3 bg-slate-50 rounded-2xl text-[11px] font-black border border-slate-100">
+                    <span>B${b.id}: N${b.node1} ↔ N${b.node2}</span>
+                    <button onclick="deleteBar(${b.id})" class="text-rose-500"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                </div>
+            `).join('');
+
+            const lList = document.getElementById('loadsList');
+            lList.innerHTML = loads.map(l => `
+                <div class="flex justify-between p-3 bg-slate-50 rounded-2xl text-[10px] font-black border border-slate-100">
+                    <span>N${l.nodeId}: ${l.magnitude}${units.force} @ ${l.angle}°</span>
+                    <button onclick="deleteLoad(${l.id})" class="text-rose-500"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>
+                </div>
+            `).join('');
+
+            // Actualizar Selects
+            const nodeOptions = `<option value="">Seleccionar...</option>` + nodes.map(n => `<option value="${n.id}">Nodo ${n.id}</option>`).join('');
+            document.getElementById('barNode1').innerHTML = nodeOptions;
+            document.getElementById('barNode2').innerHTML = nodeOptions;
+            document.getElementById('loadNode').innerHTML = nodeOptions;
+
+            // Renderizar Diagramas
+            document.getElementById('svgContainer').innerHTML = getTrussSVG(false);
+            if (results) {
+                document.getElementById('svgResultContainer').innerHTML = getTrussSVG(true);
+                
+                document.getElementById('forcesTable').innerHTML = results.barForces.map(f => `
+                    <div class="flex justify-between items-center py-2 border-b border-[#31470b]/50 text-[11px] font-black">
+                        <span>Barra ${f.id}</span>
+                        <span class="${f.type === 'Tensión' ? 'text-rose-400' : 'text-cyan-400'}">${Math.abs(f.force).toFixed(2)} ${units.force}</span>
+                    </div>
+                `).join('');
+
+                document.getElementById('reactionsTable').innerHTML = results.reactions.map(r => `
+                    <div class="flex justify-between items-center border-b border-[#d9ef9f]/50 pb-2">
+                        <span class="text-[#586e26]/60 uppercase text-[10px]">${r.label}:</span>
+                        <span class="text-[#31470b]">${r.value.toFixed(2)} ${units.force}</span>
+                    </div>
+                `).join('');
+
+                // Detalle de nodos
+                if (activeTab === 'nodes-detail') {
+                    const nodeArea = document.getElementById('view-nodes-detail');
+                    nodeArea.innerHTML = nodes.map(n => {
+                        const data = getNodeData(n.id);
+                        return `
+                        <div class="bg-white rounded-[3rem] shadow-2xl border-4 border-slate-50 p-8 flex flex-col items-center">
+                            <h4 class="text-2xl font-black text-[#203500] mb-6 uppercase decoration-[#586e26] underline underline-offset-8">Nodo ${n.id}</h4>
+                            <div class="w-full h-64 bg-slate-50 rounded-[2.5rem] flex items-center justify-center border-2 border-dashed border-slate-200 mb-6">
+                                ${getDCLSVG(n.id, 220)}
+                            </div>
+                            <div class="w-full space-y-2 text-[#d9ef9f]">
+                                <div class="bg-[#203500] text-white p-4 rounded-2xl font-mono text-[9px]">
+                                    <p><span class="font-bold">ΣFx:</span> ${data.eqX} = 0</p>
+                                    <p><span class="font-bold">Val:</span> ${data.calcX} ≈ 0</p>
+                                </div>
+                                <div class="bg-[#203500] text-white p-4 rounded-2xl font-mono text-[9px]">
+                                    <p><span class="font-bold">ΣFy:</span> ${data.eqY} = 0</p>
+                                    <p><span class="font-bold">Val:</span> ${data.calcY} ≈ 0</p>
+                                </div>
+                            </div>
+                        </div>
+                        `;
+                    }).join('');
+                }
+            }
+        }
+
+        function getTrussSVG(showForces = false, scaleFactor = 1) {
+            if (nodes.length === 0) return '';
+            const minX = Math.min(...nodes.map(n => n.x)); const maxX = Math.max(...nodes.map(n => n.x));
+            const minY = Math.min(...nodes.map(n => n.y)); const maxY = Math.max(...nodes.map(n => n.y));
+            const width = 800 * scaleFactor; const height = 400 * scaleFactor;
+            const scale = Math.min((width - 150*scaleFactor) / (maxX - minX || 1), (height - 150*scaleFactor) / (maxY - minY || 1));
+            const getX = (x) => 75*scaleFactor + (x - minX) * scale;
+            const getY = (y) => height - 75*scaleFactor - (y - minY) * scale;
+
+            let barsSVG = bars.map(bar => {
+                const n1 = nodes.find(n => n.id === bar.node1);
+                const n2 = nodes.find(n => n.id === bar.node2);
+                const res = results?.barForces.find(f => f.id === bar.id);
+                let color = res ? (res.type === 'Tensión' ? "stroke-rose-500" : res.type === 'Compresión' ? "stroke-cyan-500" : "stroke-slate-400") : "stroke-slate-600";
+                return `
+                <g>
+                    <line x1="${getX(n1.x)}" y1="${getY(n1.y)}" x2="${getX(n2.x)}" y2="${getY(n2.y)}" class="${color}" stroke-width="6" stroke-linecap="round" />
+                    ${showForces && res ? `<g><rect x="${(getX(n1.x)+getX(n2.x))/2-35}" y="${(getY(n1.y)+getY(n2.y))/2-12}" width="70" height="24" rx="6" fill="rgba(0,0,0,0.8)" /><text x="${(getX(n1.x)+getX(n2.x))/2}" y="${(getY(n1.y)+getY(n2.y))/2+5}" fill="white" font-size="10" text-anchor="middle" font-weight="bold">${Math.abs(res.force).toFixed(1)}</text></g>` : ''}
+                </g>`;
+            }).join('');
+
+            let loadsSVG = loads.map(l => {
+                const n = nodes.find(node => node.id === l.nodeId);
+                const r = (l.angle * Math.PI) / 180;
+                const x2 = getX(n.x) + Math.cos(r)*50;
+                const y2 = getY(n.y) - Math.sin(r)*50;
+                return `<g><line x1="${x2}" y1="${y2}" x2="${getX(n.x)}" y2="${getY(n.y)}" stroke="#eab308" stroke-width="4" marker-end="url(#arr-loa)" /><text x="${x2}" y="${y2-5}" fill="#eab308" font-size="10" font-weight="bold" text-anchor="middle">${l.magnitude} ${units.force}</text></g>`;
+            }).join('');
+
+            let nodesSVG = nodes.map(n => `
+                <g>
+                    ${n.support === 'fixed' ? `<path d="M ${getX(n.x)-15} ${getY(n.y)+15} L ${getX(n.x)+15} ${getY(n.y)+15} L ${getX(n.x)} ${getY(n.y)} Z" fill="#4ade80" />` : ''}
+                    ${n.support === 'roller' ? `<circle cx="${getX(n.x)}" cy="${getY(n.y)+12}" r="8" fill="#60a5fa" />` : ''}
+                    <circle cx="${getX(n.x)}" cy="${getY(n.y)}" r="8" fill="white" />
+                    <text x="${getX(n.x)+14}" y="${getY(n.y)-14}" fill="white" font-size="13" font-weight="900" opacity="0.8">N${n.id}</text>
+                    ${showForces ? results?.reactions.filter(r => r.label.startsWith(`${n.id}_`)).map(r => {
+                        const isRy = r.label.includes('Ry'); const label = isRy ? 'Ry' : 'Rx';
+                        const x2 = getX(n.x) + (isRy ? 0 : (r.value > 0 ? 40 : -40)); 
+                        const y2 = getY(n.y) + (isRy ? (r.value > 0 ? -40 : 40) : 0);
+                        return `<line x1="${getX(n.x)}" y1="${getY(n.y)}" x2="${x2}" y2="${y2}" stroke="#10b981" stroke-width="3" marker-end="url(#arr-gre)" /><text x="${x2 + (isRy ? 5 : 0)}" y="${y2 + (isRy ? 0 : -5)}" fill="#10b981" font-size="12" font-weight="900" text-anchor="${isRy ? "start" : "middle"}">${label}: ${Math.abs(r.value).toFixed(1)}</text>`;
+                    }).join('') : ''}
+                </g>
+            `).join('');
+
+            return `
+            <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" class="bg-slate-900 rounded-[2rem] shadow-2xl border-4 border-[#31470b]">
+                <defs>
+                    <marker id="arr-gre" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#10b981" /></marker>
+                    <marker id="arr-loa" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#eab308" /></marker>
+                </defs>
+                ${barsSVG} ${loadsSVG} ${nodesSVG}
+            </svg>`;
+        }
+
+        function getDCLSVG(nodeId, size) {
+            const node = nodes.find(n => n.id === nodeId);
+            const connBars = results.barForces.filter(b => b.node1 === nodeId || b.node2 === nodeId);
+            const nodeReactions = results.reactions.filter(r => r.label.startsWith(`${nodeId}_`));
+            const center = size / 2;
+
+            let arrows = connBars.map(bar => {
+                const otherId = bar.node1 === nodeId ? bar.node2 : bar.node1;
+                const otherNode = nodes.find(n => n.id === otherId);
+                const angle = Math.atan2(-(otherNode.y - node.y), otherNode.x - node.x);
+                const len = size * 0.3;
+                return `
+                <g>
+                    <line x1="${center}" y1="${center}" x2="${center + Math.cos(angle)*len}" y2="${center + Math.sin(angle)*len}" stroke="${bar.force > 0 ? "#ef4444" : "#3b82f6"}" stroke-width="2" marker-end="url(#arr-dcl-${nodeId})" />
+                    <text x="${center + Math.cos(angle)*(len+18)}" y="${center + Math.sin(angle)*(len+18)}" font-size="8" font-weight="bold" text-anchor="middle">B${Math.min(nodeId, otherId)}-${Math.max(nodeId, otherId)}</text>
+                </g>`;
+            }).join('');
+
+            let reacs = nodeReactions.map(r => {
+                const isX = r.label.includes('Rx'); const label = isX ? 'Rx' : 'Ry';
+                const xL = isX ? (r.value > 0 ? 40 : -40) : 0; const yL = !isX ? (r.value > 0 ? -40 : 40) : 0;
+                return `
+                <g>
+                    <line x1="${center}" y1="${center}" x2="${center+xL}" y2="${center+yL}" stroke="#10b981" stroke-width="2" marker-end="url(#arr-dcl-${nodeId})" />
+                    <text x="${center + (isX ? (r.value > 0 ? 55 : -55) : 0)}" y="${center + (!isX ? (r.value > 0 ? -55 : 55) : 0)}" font-size="10" font-weight="900" fill="#10b981" text-anchor="middle">${label}</text>
+                </g>`;
+            }).join('');
+
+            return `
+            <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+                <circle cx="${center}" cy="${center}" r="6" fill="#1e293b" />
+                <defs><marker id="arr-dcl-${nodeId}" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="currentColor" /></marker></defs>
+                ${arrows} ${reacs}
+            </svg>`;
+        }
+
+        function getNodeData(nodeId) {
+            if (!results) return null;
+            const node = nodes.find(n => n.id === nodeId);
+            const connectedBars = results.barForces.filter(b => b.node1 === nodeId || b.node2 === nodeId);
+            const nodeReactions = results.reactions.filter(r => r.label.startsWith(`${nodeId}_`));
+            const nodeLoads = loads.filter(l => l.nodeId === nodeId);
+
+            let eqX = []; let eqY = [];
+            let calcX = []; let calcY = [];
+
+            connectedBars.forEach(bar => {
+                const otherId = bar.node1 === nodeId ? bar.node2 : bar.node1;
+                const otherNode = nodes.find(n => n.id === otherId);
+                const dx = otherNode.x - node.x; const dy = otherNode.y - node.y;
+                const L = Math.sqrt(dx*dx + dy*dy);
+                const cos = (dx / L); const sin = (dy / L);
+                const barLabel = `B_{${Math.min(nodeId, otherId)}-${Math.max(nodeId, otherId)}}`;
+                eqX.push(`${barLabel}(${cos.toFixed(3)})`);
+                eqY.push(`${barLabel}(${sin.toFixed(3)})`);
+                calcX.push(`(${bar.force.toFixed(2)})(${cos.toFixed(3)})`);
+                calcY.push(`(${bar.force.toFixed(2)})(${sin.toFixed(3)})`);
+            });
+
+            nodeLoads.forEach(l => {
+                if (Math.abs(l.fx) > 0.01) { eqX.push(`${l.fx.toFixed(2)} [P]`); calcX.push(`${l.fx.toFixed(2)}`); }
+                if (Math.abs(l.fy) > 0.01) { eqY.push(`${l.fy.toFixed(2)} [P]`); calcY.push(`${l.fy.toFixed(2)}`); }
+            });
+
+            nodeReactions.forEach(r => {
+                const type = r.label.includes('Rx') ? 'Rx' : 'Ry';
+                eqX.push(`${r.value.toFixed(2)} [${type}]`);
+                if (type === 'Rx') calcX.push(`${r.value.toFixed(2)}`);
+                if (type === 'Ry') calcY.push(`${r.value.toFixed(2)}`);
+            });
+
+            return { eqX: eqX.join(' + ') || '0', eqY: eqY.join(' + ') || '0', calcX: calcX.join(' + ') || '0', calcY: calcY.join(' + ') || '0' };
+        }
+
+        async function handleDownloadPDF() {
+            const report = document.getElementById('reportContainer');
+            report.style.display = 'block';
+            report.innerHTML = `
+                <div style="border-bottom: 3pt solid #203500; margin-bottom: 8mm; padding-bottom: 4mm; display: flex; justify-content: space-between; align-items: flex-end;">
+                    <div>
+                        <h1 style="font-size: 24pt; font-weight: 900; color: #203500; text-transform: uppercase; margin: 0;">Memoria de Cálculo</h1>
+                        <p style="font-size: 11pt; color: #586e26; font-weight: bold; margin: 2mm 0;">Calculadora Armaduras Nodo x Nodo</p>
+                        <p style="font-size: 9pt; color: #31470b; margin: 0;">POR PATRACA HERNANDEZ AGUSTIN, IPN</p>
+                    </div>
+                    <p style="font-size: 10pt; color: #31470b; margin: 0;">Fecha: ${new Date().toLocaleDateString()}</p>
+                </div>
+                <h2 style="font-size: 14pt; font-weight: bold; border-left: 5pt solid #586e26; padding-left: 3mm; margin-bottom: 4mm; color: #203500;">I. ESQUEMA GENERAL Y REACCIONES</h2>
+                <div style="border: 1pt solid #f1f5f9; border-radius: 6mm; padding: 6mm; text-align: center; margin-bottom: 8mm;">
+                    ${getTrussSVG(true, 0.8)}
+                </div>
+                <h2 style="font-size: 14pt; font-weight: bold; border-left: 5pt solid #586e26; padding-left: 3mm; margin-bottom: 6mm; color: #203500;">II. DESARROLLO DE NODOS (DCL)</h2>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6mm;">
+                    ${nodes.map(n => {
+                        const d = getNodeData(n.id);
+                        return `
+                        <div style="border: 1pt solid #d9ef9f; border-radius: 4mm; padding: 4mm; page-break-inside: avoid;">
+                            <p style="font-weight: 900; font-size: 10pt; text-align: center; color: #203500; margin-bottom: 2mm;">NODO ${n.id}</p>
+                            <div style="display: flex; justify-content: center;">${getDCLSVG(n.id, 160)}</div>
+                            <div style="font-size: 7.5pt; font-family: monospace; background-color: #f1f5f9; padding: 3mm; border-radius: 2mm;">
+                                <p><strong style="color: #586e26">Eq X:</strong> ${d.eqX} = 0</p>
+                                <p><strong style="color: #586e26">Eq Y:</strong> ${d.eqY} = 0</p>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            `;
+
+            try {
+                const canvas = await html2canvas(report, { scale: 2 });
+                const imgData = canvas.toDataURL('image/png');
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('p', 'mm', 'letter');
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                
+                let heightLeft = pdfHeight;
+                let position = 0;
+                const pageHeight = pdf.internal.pageSize.getHeight();
+
+                pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+                heightLeft -= pageHeight;
+
+                while (heightLeft >= 0) {
+                    position = heightLeft - pdfHeight;
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+                    heightLeft -= pageHeight;
+                }
+                pdf.save(`Calculo_Armadura_${Date.now()}.pdf`);
+            } catch (e) {
+                console.error(e);
+            } finally {
+                report.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
